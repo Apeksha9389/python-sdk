@@ -25,10 +25,19 @@ class ConductorWorkflow:
     SCHEMA_VERSION = 2
 
     def __init__(self,
-                 executor: WorkflowExecutor,
-                 name: str,
+                 executor: Optional[WorkflowExecutor] = None,
+                 name: Optional[str] = None,
                  version: Optional[int] = None,
                  description: Optional[str] = None) -> Self:
+        """
+        Parameters
+        ----------
+        executor Optional WorkflowExecutor used by register/start/execute. May be omitted to build
+                 a workflow definition offline (e.g. for to_workflow_def() or unit tests).
+        name Name of the workflow (required)
+        """
+        if name is None:
+            raise TypeError("ConductorWorkflow requires a 'name' argument")
         self._executor = executor
         self.name = name
         self.version = version
@@ -207,7 +216,7 @@ class ConductorWorkflow:
     # overwritten. When not set, the call fails if there is any change in the workflow definition between the server
     # and what is being registered.
     def register(self, overwrite: bool):
-        return self._executor.register_workflow(
+        return self.__get_executor().register_workflow(
             overwrite=overwrite,
             workflow=self.to_workflow_def(),
         )
@@ -226,7 +235,7 @@ class ConductorWorkflow:
         start_workflow_request.workflow_def = self.to_workflow_def()
         start_workflow_request.name = self.name
         start_workflow_request.version = self.version
-        return self._executor.start_workflow(start_workflow_request)
+        return self.__get_executor().start_workflow(start_workflow_request)
 
     def start_workflow_with_input(self, workflow_input: Optional[dict] = None, correlation_id: Optional[str] = None, task_to_domain: Optional[Dict[str, str]] = None,
                  priority: Optional[int] = None, idempotency_key: Optional[str] = None, idempotency_strategy: IdempotencyStrategy = IdempotencyStrategy.FAIL) -> str:
@@ -245,7 +254,7 @@ class ConductorWorkflow:
         start_workflow_request.priority = priority
         start_workflow_request.task_to_domain =task_to_domain
 
-        return self._executor.start_workflow(start_workflow_request)
+        return self.__get_executor().start_workflow(start_workflow_request)
 
     def execute(self, workflow_input: Any = None, wait_until_task_ref: str = "", wait_for_seconds: int = 10,
                 request_id: Optional[str] = None,
@@ -274,8 +283,9 @@ class ConductorWorkflow:
             request.idempotency_strategy = idempotency_strategy
         if task_to_domain is not None:
             request.task_to_domain = task_to_domain
-        run = self._executor.execute_workflow(request, wait_until_task_ref=wait_until_task_ref,
-                                              wait_for_seconds=wait_for_seconds, request_id=request_id)
+        run = self.__get_executor().execute_workflow(
+            request, wait_until_task_ref=wait_until_task_ref,
+            wait_for_seconds=wait_for_seconds, request_id=request_id)
 
         return run
 
@@ -302,6 +312,14 @@ class ConductorWorkflow:
         sub_workflow_task = InlineSubWorkflowTask(task_ref_name=self.name + "_" + str(uuid()), workflow=self)
         sub_workflow_task.input_parameters.update(self._input_template)
         return sub_workflow_task.to_workflow_task()
+
+    def __get_executor(self) -> WorkflowExecutor:
+        if self._executor is None:
+            raise RuntimeError(
+                f"ConductorWorkflow '{self._name}' has no executor; pass a WorkflowExecutor "
+                "to the constructor to register, start or execute it"
+            )
+        return self._executor
 
     def __get_workflow_task_list(self) -> List[WorkflowTask]:
         workflow_task_list = []
